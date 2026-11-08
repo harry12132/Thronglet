@@ -766,6 +766,7 @@ class SpatialVoidSimulation:
     ):
         self.cycle = 0
         self.entity_counter = 1
+        self.run_id = str(time.time_ns())
 
         self.population = []
 
@@ -822,7 +823,7 @@ class SpatialVoidSimulation:
     def spawn_founder(self):
         entity = Entity(
             entity_id=(
-                f"Spawn_{self.entity_counter}"
+                f"Run_{self.run_id}_Spawn_{self.entity_counter}"
             )
         )
 
@@ -1106,10 +1107,6 @@ class SpatialVoidSimulation:
                 "concept": inferred_name,
                 "cycle": self.cycle,
             })
-            self.archive.record_word(
-                self.cycle, word, receiver.entity_id,
-                "adopted", inferred_name,
-            )
 
         self.archive.record_conversation(
             self.cycle, sender.entity_id, receiver.entity_id,
@@ -1963,8 +1960,7 @@ class SpatialVoidSimulation:
 
         child = Entity(
             entity_id=(
-                f"Gen_"
-                f"{self.entity_counter}"
+                f"Run_{self.run_id}_Gen_{self.entity_counter}"
             ),
             x=child_x,
             y=child_y,
