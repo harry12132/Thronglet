@@ -10,11 +10,13 @@ Requires Python 3.10 or newer. No third-party packages are required.
 python spatial_void.py
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) to view the research dashboard.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) to view the research dashboard, or [http://127.0.0.1:8000/world](http://127.0.0.1:8000/world) to watch the live pixel-art world.
 
 ## Research archive
 
 The dashboard includes live population data, a searchable conversation archive, a living dictionary, organism profiles (including deceased organisms), and language analytics.
+
+The live world is rendered with Phaser and reads the simulation's actual organism positions and tile conditions. The Phaser library is loaded from a CDN, so the world viewer needs an internet connection; the Python simulation and research archive remain local.
 
 Research records are stored locally in `thronglet_archive.sqlite3` in the directory from which the simulation is started. The archive survives simulation restarts. Keep this file if you want to preserve your experiment history.
 
