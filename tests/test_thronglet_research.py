@@ -19,6 +19,7 @@ def organism(words=None, generation=0):
         learned_programs={"proto": []},
         language_stats={"messages_sent": 2},
         program_stats={"executions": 1},
+        context_associations={},
         cultural_memory=deque([{"kind": "test"}]),
     )
 
