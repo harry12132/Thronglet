@@ -1121,7 +1121,14 @@ class SpatialVoidSimulation:
             and evidence_count >= 3
             and random.random() < 0.35
         ):
-            receiver.learn_word(word, inferred_cid)
+            if receiver.learn_word(word, inferred_cid):
+                self.archive.record_word(
+                    self.cycle, word, receiver.entity_id,
+                    "adopted", inferred_name,
+                )
+                self.archive_previous_words.setdefault(
+                    receiver.entity_id, {}
+                )[word] = inferred_cid
             receiver.language_stats["teach_events"] += 1
             receiver.remember({
                 "kind": "language-learning",
