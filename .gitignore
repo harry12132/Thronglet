@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+thronglet_archive.sqlite3
+thronglet_archive.sqlite3-shm
+thronglet_archive.sqlite3-wal
