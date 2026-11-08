@@ -462,6 +462,29 @@ class Entity:
                         concept_id
                     ] = new_word
 
+        # Rare semantic drift: a symbol can become associated with a
+        # different private concept inside one organism. The archive detects
+        # and records this mapping change without exporting the concept label.
+        if (
+            self.lexicon
+            and len(self.concepts) > 1
+            and random.random() < 0.00001
+        ):
+            word = random.choice(list(self.lexicon))
+            old_cid = self.lexicon[word]
+            candidates = [
+                cid for cid in self.concepts
+                if cid != old_cid
+            ]
+            if candidates:
+                new_cid = random.choice(candidates)
+                self.inverse_lexicon.pop(old_cid, None)
+                displaced_word = self.inverse_lexicon.pop(new_cid, None)
+                if displaced_word is not None:
+                    self.lexicon.pop(displaced_word, None)
+                self.lexicon[word] = new_cid
+                self.inverse_lexicon[new_cid] = word
+
         # Programs mutate while remaining inside the safe VM.
         for name in list(
             self.learned_programs
