@@ -4,3 +4,6 @@ __pycache__/
 thronglet_archive.sqlite3
 thronglet_archive.sqlite3-shm
 thronglet_archive.sqlite3-wal
+
+# Generated simulation artifacts
+void_sandbox/
