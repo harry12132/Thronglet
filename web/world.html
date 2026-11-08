@@ -28,6 +28,37 @@
 </aside></div></div>
 <script>
 (()=>{
+if (!window.Phaser) {
+ const $=id=>document.getElementById(id), wrap=$("game");
+ const canvas=document.createElement("canvas"),ctx=canvas.getContext("2d");
+ canvas.style.cssText="width:100%;height:100%;display:block;image-rendering:pixelated";
+ wrap.appendChild(canvas);
+ const TILE=16,SIZE=64,WORLD=TILE*SIZE;
+ let data=null,selected=null,zoom=.78,ox=0,oy=0,drag=null,showLabels=true;
+ const esc=v=>String(v??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+ function resize(){const r=wrap.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);canvas.width=Math.max(1,Math.floor(r.width*dpr));canvas.height=Math.max(1,Math.floor(r.height*dpr));ctx.setTransform(dpr,0,0,dpr,0,0);draw()}
+ function draw(){
+  const w=canvas.clientWidth,h=canvas.clientHeight;ctx.clearRect(0,0,w,h);ctx.fillStyle="#0a1110";ctx.fillRect(0,0,w,h);
+  if(!data)return;
+  const scale=zoom,viewW=WORLD*scale,viewH=WORLD*scale;
+  if(!ox&&!oy){ox=(w-viewW)/2;oy=(h-viewH)/2}
+  ctx.save();ctx.translate(ox,oy);ctx.scale(scale,scale);
+  ctx.fillStyle="#0b1512";ctx.fillRect(0,0,WORLD,WORLD);
+  for(const t of data.tiles||[]){let res=Math.max(0,Math.min(1,t.resource/10)),tox=Math.max(0,Math.min(1,t.toxicity/5));let r=Math.round(14+res*29),g=Math.round(25+res*48),b=Math.round(21+res*25);if(tox>.03){r=Math.round(r*(1-tox)+116*tox);g=Math.round(g*(1-tox)+63*tox);b=Math.round(b*(1-tox)+48*tox)}ctx.fillStyle="rgb("+r+","+g+","+b+")";ctx.fillRect(t.x*TILE,t.y*TILE,TILE-1,TILE-1);if(t.signals>0){ctx.fillStyle="rgba(128,201,232,.75)";ctx.fillRect(t.x*TILE+6,t.y*TILE+6,4,4)}}
+  ctx.strokeStyle="rgba(100,160,130,.2)";ctx.lineWidth=1;for(let i=0;i<=SIZE;i+=8){ctx.beginPath();ctx.moveTo(i*TILE,0);ctx.lineTo(i*TILE,WORLD);ctx.moveTo(0,i*TILE);ctx.lineTo(WORLD,i*TILE);ctx.stroke()}
+  for(const e of data.entities||[]){const x=e.x*TILE+8,y=e.y*TILE+8,hv=e.id.split("").reduce((a,c)=>a+c.charCodeAt(0),0),colors=["#a8e3c2","#e7c17b","#9bc7e9","#d5a4d8","#e79d83","#9fd3c5"];ctx.fillStyle=selected===e.id?"#e8bf76":colors[hv%6];ctx.fillRect(x-5,y-5,10,10);ctx.fillStyle="#17221e";ctx.fillRect(x-3,y-2,2,2);ctx.fillRect(x+2,y-2,2,2);if(showLabels||selected===e.id){ctx.font="8px monospace";ctx.textAlign="center";ctx.fillStyle="#cce5d5";ctx.fillText(e.id.replace(/^Run_[^_]+_/,""),x,y-9)}}
+  ctx.restore();
+ }
+ function select(e){selected=e.id;$("selected").textContent=e.id;$("inspect").innerHTML='<div class="row"><span>Generation</span><span>'+e.generation+'</span></div><div class="row"><span>Age</span><span>'+e.age+'</span></div><div class="row"><span>Energy</span><span>'+Number(e.energy).toFixed(2)+'</span></div><div class="row"><span>Position</span><span>'+e.x+', '+e.y+'</span></div><div class="row"><span>Vocabulary</span><span>'+e.words+' symbols</span></div><div class="row"><span>Programs</span><span>'+e.programs+'</span></div><div class="row"><span>Messages</span><span>'+e.messages+'</span></div>';draw()}
+ canvas.addEventListener("pointerdown",e=>{canvas.setPointerCapture(e.pointerId);drag={x:e.clientX,y:e.clientY,ox,oy,moved:false}});
+ canvas.addEventListener("pointermove",e=>{if(!drag)return;let dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;if(drag.moved){ox=drag.ox+dx;oy=drag.oy+dy;draw()}});
+ canvas.addEventListener("pointerup",e=>{if(!drag)return;if(!drag.moved&&data){let x=(e.offsetX-ox)/zoom,y=(e.offsetY-oy)/zoom;let hit=(data.entities||[]).map(a=>({e:a,d:Math.hypot(x-(a.x*TILE+8),y-(a.y*TILE+8))})).sort((a,b)=>a.d-b.d)[0];if(hit&&hit.d<TILE)select(hit.e)}drag=null});
+ canvas.addEventListener("wheel",e=>{e.preventDefault();const old=zoom;zoom=Math.max(.3,Math.min(3,zoom*(e.deltaY>0?.9:1.1)));const x=e.offsetX,y=e.offsetY;ox=x-(x-ox)*zoom/old;oy=y-(y-oy)*zoom/old;draw()},{passive:false});
+ function button(id,fn){$(id).onclick=fn}
+ button("zoomIn",()=>{zoom=Math.min(3,zoom*1.2);draw()});button("zoomOut",()=>{zoom=Math.max(.3,zoom/1.2);draw()});button("center",()=>{zoom=.78;ox=oy=0;resize()});button("labels",()=>{showLabels=!showLabels;$("labels").textContent=showLabels?"LABELS ON":"LABELS OFF";$("labels").classList.toggle("active",showLabels);draw()});
+ async function refresh(){try{const [world,convos]=await Promise.all([fetch("/api/world",{cache:"no-store"}).then(r=>{if(!r.ok)throw Error("World API HTTP "+r.status);return r.json()}),fetch("/api/research/conversations?limit=8",{cache:"no-store"}).then(r=>r.ok?r.json():[])]);data=world;$("connection").textContent="● LIVE";$("cycle").textContent="CYCLE "+world.cycle.toLocaleString();$("population").textContent=world.population;$("tick").textContent="~"+world.cycle.toLocaleString();const tiles=world.tiles||[];const avg=tiles.reduce((s,t)=>s+t.resource,0)/(tiles.length||1),danger=tiles.filter(t=>t.toxicity>.5).length,signals=tiles.reduce((s,t)=>s+t.signals,0);$("environment").innerHTML='<div class="row"><span>Mean resources</span><span>'+avg.toFixed(2)+'/10</span></div><div class="row"><span>Toxic tiles</span><span>'+danger+'</span></div><div class="row"><span>Active signals</span><span>'+signals+'</span></div><div class="row"><span>Occupied tiles</span><span>'+world.entities.length+'</span></div>';$("events").innerHTML=world.events?.length?world.events.slice(-7).reverse().map(v=>'<div class="event"><small>CYCLE '+v.cycle+'</small>'+esc(v.message)+'</div>').join(""):'<div class="empty">No recent events recorded.</div>';if(convos.length)$("talk").innerHTML=convos.slice(0,5).map(c=>'<div class="event"><small>C'+c.cycle+' · '+esc(c.sender)+' → '+esc(c.receiver)+'</small><span style="color:var(--mint)">'+esc(c.symbol)+'</span> <span class="muted">· '+esc(c.interpretation||"uncertain")+'</span></div>').join("");if(selected){const e=world.entities.find(v=>v.id===selected);if(e)select(e);else{selected=null;$("selected").textContent="No organism selected";$("inspect").textContent="This organism is no longer in the living population."}}draw()}catch(e){$("connection").textContent="● DISCONNECTED";$("events").textContent="Viewer error: "+e.message;console.error(e)}}
+ window.addEventListener("resize",resize);resize();refresh();setInterval(refresh,900);return;
+}
 const TILE=16,SIZE=64,WORLD=TILE*SIZE;
 const $=id=>document.getElementById(id);
 let latest=null,selected=null,showLabels=true,sceneRef=null,entities=new Map(),lastConvoId=0;
@@ -102,7 +133,7 @@ async function refresh(){
   renderEnvironment(data);renderEvents(data.events);
   if(convos.length){$("talk").innerHTML=convos.slice(0,5).map(c=>'<div class="event"><small>C'+c.cycle+' · '+esc(c.sender)+' → '+esc(c.receiver)+'</small><span style="color:var(--mint)">'+esc(c.symbol)+'</span> <span class="muted">· '+esc(c.interpretation||"uncertain")+'</span></div>').join("")}
   if(selected&&entities.has(selected))selectEntity(selected);else if(selected){selected=null;$("selected").textContent="No organism selected";$("inspect").textContent="This organism is no longer in the living population."}
- }catch(e){$("connection").textContent="● DISCONNECTED";console.error(e)}
+ }catch(e){$("connection").textContent="● DISCONNECTED";$("events").textContent="Viewer error: "+e.message;console.error(e)}
 }
 $("zoomIn").onclick=()=>{const c=game.scene.getScene("world")?.cameras.main;if(c)c.setZoom(Math.min(3,c.zoom*1.2))};
 $("zoomOut").onclick=()=>{const c=game.scene.getScene("world")?.cameras.main;if(c)c.setZoom(Math.max(.35,c.zoom/1.2))};
