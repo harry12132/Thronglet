@@ -108,7 +108,19 @@ class ResearchArchive:
         if q: sql+=" WHERE word LIKE ?"; args.append(f"%{q}%")
         sql+=" GROUP BY word ORDER BY speakers DESC,events DESC LIMIT ?"; args.append(max(1,min(int(limit),500)))
         with self.lock, self._db() as db:
-            return [dict(r) for r in db.execute(sql,args).fetchall()]
+            result=[]
+            for row in db.execute(sql,args).fetchall():
+                item=dict(row)
+                item["history"]=[
+                    {"cycle":h["cycle"],"organism":h["organism"],
+                     "action":h["action"],"interpretation":h["interpretation"]}
+                    for h in db.execute(
+                        "SELECT cycle,organism,action,interpretation FROM words WHERE word=? ORDER BY id ASC LIMIT 100",
+                        (item["word"],),
+                    ).fetchall()
+                ]
+                result.append(item)
+            return result
 
     def organisms(self,q="",limit=300):
         sql="SELECT * FROM organisms"; args=[]
@@ -170,7 +182,7 @@ el('search').oninput=()=>{clearTimeout(timer);timer=setTimeout(render,180)};
 async function render(){const q=encodeURIComponent(el('search').value.trim());try{
 if(tab==='overview'){const [cs,ws]=await Promise.all([get('/api/research/conversations?limit=12'),get('/api/research/words?limit=10')]);el('recent').innerHTML=cs.length?cs.map(convo).join(''):empty('No exchanges recorded yet.');el('topwords').innerHTML=bars(ws);if(state)el('population').innerHTML='<table><thead><tr><th>Organism</th><th>Gen</th><th>Age</th><th>Energy</th><th>Words</th><th>Messages</th></tr></thead><tbody>'+state.entities.map(e=>'<tr><td><button class="link" data-id="'+esc(e.id)+'">'+esc(e.id)+'</button></td><td>'+e.generation+'</td><td>'+e.age+'</td><td>'+e.energy.toFixed(1)+'</td><td>'+e.words+'</td><td>'+e.messages+'</td></tr>').join('')+'</tbody></table>'}
 if(tab==='conversations'){const a=await get('/api/research/conversations?limit=300&q='+q);el('allconversations').innerHTML=a.length?a.map(convo).join(''):empty('No matching conversations.')}
-if(tab==='dictionary'){const a=await get('/api/research/words?limit=300&q='+q);el('allwords').innerHTML=a.length?'<table><thead><tr><th>Symbol</th><th>Speakers</th><th>Events</th><th>Last seen</th></tr></thead><tbody>'+a.map(w=>'<tr><td><code>'+esc(w.word)+'</code></td><td>'+w.speakers+'</td><td>'+w.events+'</td><td>C'+w.last_cycle+'</td></tr>').join('')+'</tbody></table>':empty('No matching symbols.')}
+if(tab==='dictionary'){const a=await get('/api/research/words?limit=300&q='+q);el('allwords').innerHTML=a.length?'<table><thead><tr><th>Symbol</th><th>Speakers</th><th>Events</th><th>Last seen</th><th>Origins / changes</th></tr></thead><tbody>'+a.map(w=>'<tr><td><code>'+esc(w.word)+'</code></td><td>'+w.speakers+'</td><td>'+w.events+'</td><td>C'+w.last_cycle+'</td><td>'+w.history.map(h=>'<span class="pill">'+esc(h.action)+' · '+esc(h.organism)+'</span>').join(' ')+'</td></tr>').join('')+'</tbody></table>':empty('No matching symbols.')}
 if(tab==='organisms'){const a=await get('/api/research/organisms?limit=300&q='+q);el('allorganisms').innerHTML=a.length?'<table><thead><tr><th>Organism</th><th>Status</th><th>Generation</th><th>First seen</th><th>Last seen</th><th>Vocabulary</th></tr></thead><tbody>'+a.map(o=>'<tr><td><button class="link" data-id="'+esc(o.id)+'">'+esc(o.id)+'</button></td><td>'+esc(o.status)+'</td><td>'+o.generation+'</td><td>C'+o.first_seen+'</td><td>C'+o.last_seen+'</td><td>'+Object.keys(o.words||{}).length+'</td></tr>').join('')+'</tbody></table>':empty('No profiles found.')}
 if(tab==='analytics'){const [s,w]=await Promise.all([get('/api/research/summary'),get('/api/research/words?limit=15')]);el('analyticstats').innerHTML=[['Exchanges',s.conversations],['Interpreted',s.understood],['Success rate',s.success_rate+'%'],['Deceased',s.deceased]].map(x=>'<div class="stat"><strong>'+num(x[1])+'</strong><span>'+x[0]+'</span></div>').join('');el('distribution').innerHTML=bars(w)}
 }catch(e){console.error(e);el('status').textContent='Archive unavailable'}}
