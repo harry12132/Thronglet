@@ -2149,6 +2149,43 @@ class SpatialVoidSimulation:
     # Dashboard snapshot
     # -----------------------------------------------------------------------
 
+    def world_snapshot(self):
+        """Return live visualisation data without exposing private concepts."""
+        return {
+            "cycle": self.cycle,
+            "grid_size": GRID_SIZE,
+            "population": len(self.population),
+            "tiles": [
+                {
+                    "x": tile.x,
+                    "y": tile.y,
+                    "resource": round(tile.resource, 2),
+                    "toxicity": round(tile.toxicity, 2),
+                    "signals": len(tile.signals),
+                }
+                for column in self.grid
+                for tile in column
+            ],
+            "entities": [
+                {
+                    "id": entity.entity_id,
+                    "x": entity.x,
+                    "y": entity.y,
+                    "age": entity.age,
+                    "generation": entity.generation,
+                    "energy": round(entity.energy, 2),
+                    "words": len(entity.lexicon),
+                    "programs": len(entity.learned_programs),
+                    "messages": (
+                        entity.language_stats["messages_sent"]
+                        + entity.language_stats["messages_received"]
+                    ),
+                }
+                for entity in self.population
+            ],
+            "events": list(reversed(self.events))[-16:],
+        }
+
     def snapshot(
         self,
         running,
