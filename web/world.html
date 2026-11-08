@@ -76,8 +76,9 @@ function makeSprite(scene,key,color){
  scene.textures.addCanvas(key,canvas);scene.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
 }
 class WorldScene extends Phaser.Scene{
- constructor(){super("world");this.map=this.add.graphics();this.markers=this.add.graphics();this.lastPositions=new Map();this.lastDraw=0}
+ constructor(){super("world");this.lastPositions=new Map();this.lastDraw=0}
  create(){
+  this.map=this.add.graphics();this.markers=this.add.graphics();
   sceneRef=this;this.cameras.main.setBounds(0,0,WORLD,WORLD);this.cameras.main.setZoom(.78);this.cameras.main.centerOn(WORLD/2,WORLD/2);
   this.input.on("wheel",(p,objs,dx,dy)=>{const z=this.cameras.main.zoom;this.cameras.main.setZoom(Phaser.Math.Clamp(z*(dy>0?.9:1.1),.35,3))});
   this.input.on("pointerdown",p=>{if(p.button===2)return;this.drag={x:p.x,y:p.y,cx:this.cameras.main.scrollX,cy:this.cameras.main.scrollY,down:true, moved:false}});
