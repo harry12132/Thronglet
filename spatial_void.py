@@ -1094,10 +1094,33 @@ class SpatialVoidSimulation:
              if data["name"] == inferred_name),
             None,
         )
-        confidence = 0.35 if inferred_cid is not None else 0.0
+        # Accumulate evidence for the same symbol in similar contexts.
+        # A single coincidence is not enough to establish a word meaning.
+        context_key = "|".join((
+            context["resource"],
+            context["toxicity"],
+            "nearby" if context["nearby"] else "alone",
+            "signal" if context["signals"] else "silent",
+        ))
+        evidence_by_context = receiver.context_associations.setdefault(word, {})
+        evidence = evidence_by_context.setdefault(
+            context_key, {"candidate": inferred_name, "count": 0}
+        )
+        if evidence["candidate"] == inferred_name:
+            evidence["count"] += 1
+        else:
+            evidence["candidate"] = inferred_name
+            evidence["count"] = 1
+
+        evidence_count = evidence["count"]
+        confidence = min(0.85, 0.2 + evidence_count * 0.15)
         interpretation = inferred_name if inferred_cid is not None else None
 
-        if inferred_cid is not None and random.random() < 0.12:
+        if (
+            inferred_cid is not None
+            and evidence_count >= 3
+            and random.random() < 0.35
+        ):
             receiver.learn_word(word, inferred_cid)
             receiver.language_stats["teach_events"] += 1
             receiver.remember({
@@ -1105,6 +1128,7 @@ class SpatialVoidSimulation:
                 "from": sender.entity_id,
                 "word": word,
                 "concept": inferred_name,
+                "evidence_count": evidence_count,
                 "cycle": self.cycle,
             })
 
