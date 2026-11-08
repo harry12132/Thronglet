@@ -6,7 +6,9 @@ import threading
 import time
 from collections import Counter, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+from thronglet_research import ResearchArchive, DASHBOARD_HTML
 
 
 GRID_SIZE = 64
@@ -224,6 +226,7 @@ class Entity:
 
         self.social_memory = {}
         self.tile_memory = {}
+        self.context_associations = {}
 
         # ------------------------------------------------------------------
         # Statistics
@@ -773,6 +776,10 @@ class SpatialVoidSimulation:
         self.language_global = Counter()
         self.program_global = Counter()
 
+        # Persistent observer archive; records are stored locally in SQLite.
+        self.archive = ResearchArchive()
+        self.archive_previous_words = {}
+
         self.grid = [
             [
                 SpatialTile(
@@ -987,6 +994,10 @@ class SpatialVoidSimulation:
                     word,
                     cid,
                 )
+                self.archive.record_word(
+                    self.cycle, word, entity.entity_id,
+                    "originated", data["name"]
+                )
 
                 entity.remember(
                     {
@@ -1005,169 +1016,105 @@ class SpatialVoidSimulation:
                     f"{data['name']}."
                 )
 
-    def choose_message(
-        self,
-        sender,
-    ):
+    def observe_context(self, entity):
+        tile = self.tile(entity)
+        return {
+            "resource": "high" if tile.resource > 5.0 else "low",
+            "toxicity": "high" if tile.toxicity > 1.0 else "low",
+            "nearby": min(4, len(self.nearby_entities(entity, radius=1))),
+            "signals": min(4, len(tile.signals)),
+        }
+
+    def choose_message(self, sender):
         candidates = []
-
-        for cid, data in (
-            sender.concepts.items()
-        ):
-            word = sender.word_for(
-                cid
-            )
-
+        for cid, data in sender.concepts.items():
+            word = sender.word_for(cid)
             if word:
-                score = (
-                    data["seen"]
-                    + abs(
-                        data["value"]
-                    ) * 0.1
-                )
-
-                candidates.append(
-                    (
-                        score,
-                        cid,
-                        word,
-                    )
-                )
-
+                score = data["seen"] + abs(data["value"]) * 0.1
+                candidates.append((score, cid, word))
         if not candidates:
             return None
-
-        candidates.sort(
-            reverse=True
-        )
-
+        candidates.sort(reverse=True)
         _, cid, word = candidates[0]
-
-        intensity = max(
-            -1.0,
-            min(
-                1.0,
-                sender.concepts[cid][
-                    "value"
-                ] / 10.0,
-            ),
-        )
-
+        intensity = max(-1.0, min(1.0, sender.concepts[cid]["value"] / 10.0))
+        # Only the symbol and observable context cross the communication boundary.
+        # Sender concept IDs and private concept labels are never transmitted.
         return {
             "word": word,
             "signal": intensity,
-            "concept_hint": sender.concepts[
-                cid
-            ]["name"],
-            "sender_concept": cid,
+            "context": self.observe_context(sender),
         }
 
-    def communicate(
-        self,
-        sender,
-        receiver,
-    ):
-        message = self.choose_message(
-            sender
-        )
-
+    def communicate(self, sender, receiver):
+        message = self.choose_message(sender)
         if message is None:
             return
 
-        sender.language_stats[
-            "messages_sent"
-        ] += 1
-
-        receiver.language_stats[
-            "messages_received"
-        ] += 1
-
+        sender.language_stats["messages_sent"] += 1
+        receiver.language_stats["messages_received"] += 1
         word = message["word"]
+        context = message["context"]
+        learned_cid = receiver.concept_for_word(word)
 
-        learned_cid = (
-            receiver.concept_for_word(
-                word
-            )
-        )
-
-        # Known word.
         if learned_cid is not None:
-            receiver.language_stats[
-                "successful_interpretations"
-            ] += 1
-
-            receiver.social_memory[
-                sender.entity_id
-            ] = {
-                "word": word,
-                "concept": receiver.concepts[
-                    learned_cid
-                ]["name"],
-                "cycle": self.cycle,
+            receiver.language_stats["successful_interpretations"] += 1
+            interpretation = receiver.concepts[learned_cid]["name"]
+            receiver.social_memory[sender.entity_id] = {
+                "word": word, "concept": interpretation, "cycle": self.cycle,
             }
-
-            receiver.remember(
-                {
-                    "kind": "understood",
-                    "from": sender.entity_id,
-                    "word": word,
-                    "concept": receiver.concepts[
-                        learned_cid
-                    ]["name"],
-                    "cycle": self.cycle,
-                }
+            receiver.remember({
+                "kind": "understood", "from": sender.entity_id,
+                "word": word, "concept": interpretation, "cycle": self.cycle,
+            })
+            self.archive.record_conversation(
+                self.cycle, sender.entity_id, receiver.entity_id,
+                word, context, interpretation, 1.0, True,
             )
-
             return
 
-        # Unknown word.
-        receiver.language_stats[
-            "failed_interpretations"
-        ] += 1
+        receiver.language_stats["failed_interpretations"] += 1
 
-        possible = list(
-            receiver.concepts
+        # Infer only from visible environmental context. This is deliberately
+        # uncertain: no sender-side concept label or identifier is available.
+        inferred_name = None
+        if context["toxicity"] == "high":
+            inferred_name = "dangerous-place"
+        elif context["resource"] == "high":
+            inferred_name = "resource-rich"
+        elif context["signals"] > 0:
+            inferred_name = "signal"
+        elif context["nearby"] > 0:
+            inferred_name = "other"
+        else:
+            inferred_name = "place"
+
+        inferred_cid = next(
+            (cid for cid, data in receiver.concepts.items()
+             if data["name"] == inferred_name),
+            None,
         )
+        confidence = 0.35 if inferred_cid is not None else 0.0
+        interpretation = inferred_name if inferred_cid is not None else None
 
-        if not possible:
-            return
-
-        inferred = max(
-            possible,
-            key=lambda cid: (
-                self.concept_similarity(
-                    receiver.concepts[cid][
-                        "name"
-                    ],
-                    message[
-                        "concept_hint"
-                    ],
-                )
-            ),
-        )
-
-        # The receiver occasionally adopts its interpretation.
-        if random.random() < 0.38:
-            receiver.learn_word(
-                word,
-                inferred,
+        if inferred_cid is not None and random.random() < 0.12:
+            receiver.learn_word(word, inferred_cid)
+            receiver.language_stats["teach_events"] += 1
+            receiver.remember({
+                "kind": "language-learning",
+                "from": sender.entity_id,
+                "word": word,
+                "concept": inferred_name,
+                "cycle": self.cycle,
+            })
+            self.archive.record_word(
+                self.cycle, word, receiver.entity_id,
+                "adopted", inferred_name,
             )
 
-            receiver.language_stats[
-                "teach_events"
-            ] += 1
-
-            receiver.remember(
-                {
-                    "kind": "language-learning",
-                    "from": sender.entity_id,
-                    "word": word,
-                    "concept": receiver.concepts[
-                        inferred
-                    ]["name"],
-                    "cycle": self.cycle,
-                }
-            )
+        self.archive.record_conversation(
+            self.cycle, sender.entity_id, receiver.entity_id,
+            word, context, interpretation, confidence, False,
+        )
 
     @staticmethod
     def concept_similarity(
@@ -1625,55 +1572,13 @@ class SpatialVoidSimulation:
                 cid,
             )
 
-    def teach_neighbor(
-        self,
-        entity,
-    ):
-        neighbors = self.nearby_entities(
-            entity,
-            radius=1,
-        )
-
+    def teach_neighbor(self, entity):
+        neighbors = self.nearby_entities(entity, radius=1)
         if not neighbors:
             return
-
-        target = random.choice(
-            neighbors
-        )
-
-        message = self.choose_message(
-            entity
-        )
-
-        if not message:
-            return
-
-        target.language_stats[
-            "messages_received"
-        ] += 1
-
-        sender_cid = message[
-            "sender_concept"
-        ]
-
-        sender_data = entity.concepts.get(
-            sender_cid
-        )
-
-        if sender_data is None:
-            return
-
-        target_cid = target.ensure_concept(
-            sender_data["name"]
-        )
-
-        if target.learn_word(
-            message["word"],
-            target_cid,
-        ):
-            target.language_stats[
-                "teach_events"
-            ] += 1
+        target = random.choice(neighbors)
+        # Teaching now uses the same symbol-only communication channel.
+        self.communicate(entity, target)
 
     # -----------------------------------------------------------------------
     # Program construction
@@ -2159,6 +2064,11 @@ class SpatialVoidSimulation:
             :MAX_POPULATION
         ]
 
+        # Persist active and deceased profiles, plus vocabulary adoption.
+        self.archive.sync(
+            self.cycle, self.population, self.archive_previous_words
+        )
+
         # Population floor.
         while len(
             self.population
@@ -2434,6 +2344,33 @@ class DashboardServer(
 
                     return
 
+                if path.startswith("/api/research/"):
+                    parsed = urlparse(self.path)
+                    params = parse_qs(parsed.query)
+                    query = params.get("q", [""])[0]
+                    limit = params.get("limit", ["100"])[0]
+                    archive = server.simulation.archive
+
+                    if parsed.path == "/api/research/summary":
+                        self.send_json(200, archive.summary())
+                        return
+                    if parsed.path == "/api/research/conversations":
+                        self.send_json(200, archive.conversations(query, limit))
+                        return
+                    if parsed.path == "/api/research/words":
+                        self.send_json(200, archive.words(query, limit))
+                        return
+                    if parsed.path == "/api/research/organisms":
+                        self.send_json(200, archive.organisms(query, limit))
+                        return
+                    if parsed.path == "/api/research/organism":
+                        organism = archive.organism(params.get("id", [""])[0])
+                        if organism is None:
+                            self.send_json(404, {"error": "Organism not found"})
+                        else:
+                            self.send_json(200, organism)
+                        return
+
                 if path == "/api/state":
                     with server.state_lock:
                         state = (
@@ -2594,701 +2531,7 @@ def simulation_worker(
 # ---------------------------------------------------------------------------
 
 
-DASHBOARD_HTML = r"""
-<!doctype html>
-
-<html lang="en">
-
-<head>
-
-<meta charset="utf-8">
-
-<meta
-    name="viewport"
-    content="width=device-width,initial-scale=1"
->
-
-<title>Spatial Void</title>
-
-<style>
-
-:root {
-    color-scheme: dark;
-
-    --bg: #080b10;
-    --panel: #10161e;
-    --line: #222c38;
-
-    --text: #e7edf5;
-    --muted: #8d9aaa;
-
-    --green: #76e0ad;
-    --blue: #86adff;
-}
-
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-
-    background: var(--bg);
-    color: var(--text);
-
-    font:
-        14px / 1.45
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
-}
-
-main {
-    max-width: 1280px;
-
-    margin:
-        auto;
-
-    padding:
-        28px 20px;
-}
-
-h1,
-h2 {
-    margin: 0;
-}
-
-h1 {
-    font-size: 25px;
-    letter-spacing: -0.02em;
-}
-
-h2 {
-    font-size: 14px;
-    margin-bottom: 14px;
-}
-
-.subtitle {
-    color: var(--muted);
-
-    margin:
-        4px 0 22px;
-}
-
-.metrics {
-    display: grid;
-
-    grid-template-columns:
-        repeat(5, 1fr);
-
-    gap: 10px;
-
-    margin-bottom: 10px;
-}
-
-.card,
-.panel {
-    background: var(--panel);
-
-    border:
-        1px solid var(--line);
-
-    border-radius: 10px;
-}
-
-.card {
-    padding: 14px;
-}
-
-.label {
-    color: var(--muted);
-
-    font-size: 10px;
-
-    letter-spacing: 0.09em;
-
-    text-transform: uppercase;
-}
-
-.value {
-    font-size: 23px;
-
-    font-weight: 650;
-
-    margin-top: 2px;
-}
-
-.layout {
-    display: grid;
-
-    grid-template-columns:
-        minmax(0, 1.7fr)
-        minmax(320px, 1fr);
-
-    gap: 10px;
-}
-
-.panel {
-    padding: 15px;
-
-    margin-bottom: 10px;
-}
-
-table {
-    width: 100%;
-
-    border-collapse:
-        collapse;
-}
-
-th,
-td {
-    padding:
-        7px 6px;
-
-    border-bottom:
-        1px solid var(--line);
-
-    text-align: left;
-
-    white-space: nowrap;
-}
-
-th {
-    color: var(--muted);
-
-    font-size: 10px;
-
-    letter-spacing: 0.08em;
-
-    text-transform:
-        uppercase;
-}
-
-td {
-    font-size: 12px;
-}
-
-.events {
-    list-style: none;
-
-    padding: 0;
-    margin: 0;
-
-    max-height: 420px;
-
-    overflow: auto;
-}
-
-.events li {
-    padding: 7px 0;
-
-    border-bottom:
-        1px solid var(--line);
-
-    color: #c4cfdb;
-
-    font-size: 12px;
-}
-
-.events span {
-    color: var(--muted);
-
-    margin-right: 8px;
-}
-
-.columns {
-    display: grid;
-
-    grid-template-columns:
-        1fr 1fr;
-
-    gap: 10px;
-}
-
-.bar {
-    display: flex;
-
-    gap: 8px;
-
-    align-items:
-        center;
-
-    margin: 7px 0;
-}
-
-.bar code {
-    width: 80px;
-
-    overflow: hidden;
-
-    text-overflow:
-        ellipsis;
-
-    color: var(--green);
-}
-
-.track {
-    flex: 1;
-
-    height: 6px;
-
-    background: #1a222c;
-
-    border-radius:
-        99px;
-
-    overflow: hidden;
-}
-
-.fill {
-    height: 100%;
-
-    background: var(--blue);
-
-    width: 0;
-}
-
-@media (max-width: 900px) {
-    .metrics {
-        grid-template-columns:
-            repeat(2, 1fr);
-    }
-
-    .layout {
-        grid-template-columns:
-            1fr;
-    }
-}
-
-@media (max-width: 560px) {
-    main {
-        padding:
-            18px 12px;
-    }
-
-    .metrics {
-        grid-template-columns:
-            1fr 1fr;
-    }
-
-    .columns {
-        grid-template-columns:
-            1fr;
-    }
-
-    th:nth-child(3),
-    td:nth-child(3) {
-        display: none;
-    }
-}
-
-</style>
-
-</head>
-
-<body>
-
-<main>
-
-    <h1>Spatial Void</h1>
-
-    <div class="subtitle">
-        Autonomous beings evolving biology,
-        language, cultural memory and
-        executable world-models.
-        The dashboard is observational.
-    </div>
-
-    <section class="metrics">
-
-        <div class="card">
-            <div class="label">
-                Cycle
-            </div>
-
-            <div
-                class="value"
-                id="cycle"
-            >
-                0
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="label">
-                Population
-            </div>
-
-            <div
-                class="value"
-                id="population"
-            >
-                0
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="label">
-                Mean Energy
-            </div>
-
-            <div
-                class="value"
-                id="energy"
-            >
-                0
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="label">
-                Vocabulary
-            </div>
-
-            <div
-                class="value"
-                id="vocabulary"
-            >
-                0
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="label">
-                Program Culture
-            </div>
-
-            <div
-                class="value"
-                id="programs"
-            >
-                0
-            </div>
-        </div>
-
-    </section>
-
-    <div class="layout">
-
-        <div>
-
-            <section class="panel">
-
-                <h2>
-                    Population
-                </h2>
-
-                <table>
-
-                    <thead>
-
-                        <tr>
-                            <th>Being</th>
-                            <th>Gen</th>
-                            <th>Position</th>
-                            <th>Energy</th>
-                            <th>Words</th>
-                            <th>Programs</th>
-                            <th>Useful Exec</th>
-                        </tr>
-
-                    </thead>
-
-                    <tbody id="entities"></tbody>
-
-                </table>
-
-            </section>
-
-            <div class="columns">
-
-                <section class="panel">
-
-                    <h2>
-                        Dominant Words
-                    </h2>
-
-                    <div id="words"></div>
-
-                </section>
-
-                <section class="panel">
-
-                    <h2>
-                        Dominant Programs
-                    </h2>
-
-                    <div id="programs-list"></div>
-
-                </section>
-
-            </div>
-
-        </div>
-
-        <div>
-
-            <section class="panel">
-
-                <h2>
-                    Evolution Log
-                </h2>
-
-                <ul
-                    class="events"
-                    id="events"
-                ></ul>
-
-            </section>
-
-        </div>
-
-    </div>
-
-</main>
-
-<script>
-
-const $ = id =>
-    document.getElementById(id);
-
-
-function renderBars(
-    target,
-    items,
-    key
-) {
-    target.replaceChildren();
-
-    const max = Math.max(
-        1,
-        ...items.map(
-            x => x.population
-        )
-    );
-
-    for (
-        const item of items
-    ) {
-        const row =
-            document.createElement(
-                "div"
-            );
-
-        row.className = "bar";
-
-        const label =
-            document.createElement(
-                "code"
-            );
-
-        label.textContent =
-            item[key];
-
-        const track =
-            document.createElement(
-                "div"
-            );
-
-        track.className =
-            "track";
-
-        const fill =
-            document.createElement(
-                "div"
-            );
-
-        fill.className =
-            "fill";
-
-        fill.style.width =
-            `${
-                (
-                    item.population
-                    / max
-                ) * 100
-            }%`;
-
-        track.append(fill);
-
-        row.append(
-            label,
-            track
-        );
-
-        const count =
-            document.createElement(
-                "span"
-            );
-
-        count.textContent =
-            item.population;
-
-        count.style.color =
-            "var(--muted)";
-
-        row.append(count);
-
-        target.append(row);
-    }
-}
-
-
-function render(state) {
-
-    $("cycle").textContent =
-        state.cycle.toLocaleString();
-
-    $("population").textContent =
-        state.population.toLocaleString();
-
-    $("energy").textContent =
-        state.average_energy.toFixed(
-            1
-        );
-
-    $("vocabulary").textContent =
-        state.language_vocabulary.toLocaleString();
-
-    $("programs").textContent =
-        state.program_culture.toLocaleString();
-
-
-    const rows =
-        $("entities");
-
-    rows.replaceChildren();
-
-
-    for (
-        const entity of state.entities
-    ) {
-        const row =
-            document.createElement(
-                "tr"
-            );
-
-        const values = [
-            entity.id,
-            entity.generation,
-            `(${entity.x}, ${entity.y})`,
-            entity.energy.toFixed(1),
-            entity.words,
-            entity.programs,
-            entity.useful_programs
-        ];
-
-
-        for (
-            const value of values
-        ) {
-            const cell =
-                document.createElement(
-                    "td"
-                );
-
-            cell.textContent =
-                value;
-
-            row.append(cell);
-        }
-
-
-        rows.append(row);
-    }
-
-
-    renderBars(
-        $("words"),
-        state.dominant_words,
-        "word"
-    );
-
-    renderBars(
-        $("programs-list"),
-        state.dominant_programs,
-        "program"
-    );
-
-
-    const events =
-        $("events");
-
-    events.replaceChildren();
-
-
-    for (
-        const event of state.events
-            .slice(0, 40)
-    ) {
-        const li =
-            document.createElement(
-                "li"
-            );
-
-        const cycle =
-            document.createElement(
-                "span"
-            );
-
-        cycle.textContent =
-            `C${event.cycle}`;
-
-        li.append(cycle);
-
-        li.append(
-            document.createTextNode(
-                event.message
-            )
-        );
-
-        events.append(li);
-    }
-}
-
-
-async function update() {
-
-    try {
-
-        const response =
-            await fetch(
-                "/api/state",
-                {
-                    cache:
-                        "no-store"
-                }
-            );
-
-        if (response.ok) {
-            render(
-                await response.json()
-            );
-        }
-
-    } catch (_) {
-        // Dashboard can tolerate
-        // temporary connection failures.
-    }
-}
-
-
-setInterval(
-    update,
-    700
-);
-
-update();
-
-</script>
-
-</body>
-
-</html>
-"""
+# Dashboard is provided by the research module.
 
 
 # ---------------------------------------------------------------------------
