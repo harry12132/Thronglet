@@ -1,6 +1,7 @@
 """Persistent local research archive for Thronglet."""
 import json
 import sqlite3
+from contextlib import contextmanager
 import threading
 import time
 from pathlib import Path
@@ -27,10 +28,14 @@ class ResearchArchive:
               generation INTEGER, status TEXT, profile TEXT);
             """)
 
+    @contextmanager
     def _db(self):
         db = sqlite3.connect(str(self.path), timeout=10)
         db.row_factory = sqlite3.Row
-        return db
+        try:
+            yield db
+        finally:
+            db.close()
 
     def record_conversation(self, cycle, sender, receiver, symbol, context,
                             interpretation=None, confidence=0.0, understood=False):
@@ -57,11 +62,16 @@ class ResearchArchive:
                 db.execute("""INSERT INTO organisms VALUES(?,?,?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen,status='alive',profile=excluded.profile""",
                     (e.entity_id,first,cycle,e.generation,"alive",json.dumps(profile)))
-                old=previous.get(e.entity_id,set())
-                for word in set(e.lexicon)-old:
+                old=previous.get(e.entity_id,{})
+                current=dict(e.lexicon)
+                for word in current.keys()-old.keys():
                     db.execute("INSERT INTO words(cycle,timestamp,word,organism,action) VALUES(?,?,?,?,?)",
-                        (cycle,time.time(),word,e.entity_id,"adopted" if old else "first-observed"))
-                previous[e.entity_id]=set(e.lexicon)
+                        (cycle,time.time(),word,e.entity_id,"adopted" if e.generation > 0 else "first-observed"))
+                for word in current.keys() & old.keys():
+                    if current[word] != old[word]:
+                        db.execute("INSERT INTO words(cycle,timestamp,word,organism,action) VALUES(?,?,?,?,?)",
+                            (cycle,time.time(),word,e.entity_id,"meaning-change"))
+                previous[e.entity_id]=current
             for row in db.execute("SELECT id,profile FROM organisms WHERE status='alive'").fetchall():
                 if row["id"] not in active:
                     db.execute("UPDATE organisms SET status='deceased' WHERE id=?",(row["id"],))
