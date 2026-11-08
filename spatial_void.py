@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+from pathlib import Path
 import random
 import threading
 import time
@@ -2366,6 +2367,21 @@ class DashboardServer(
                     self.path
                 ).path
 
+                if path == "/world":
+                    world_file = Path(__file__).resolve().parent / "web" / "world.html"
+                    try:
+                        body = world_file.read_bytes()
+                    except OSError:
+                        self.send_error(503, "World viewer is not installed")
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+
                 if path == "/":
                     body = (
                         DASHBOARD_HTML
@@ -2424,6 +2440,12 @@ class DashboardServer(
                         else:
                             self.send_json(200, organism)
                         return
+
+                if path == "/api/world":
+                    with server.state_lock:
+                        state = server.simulation.world_snapshot()
+                    self.send_json(200, state)
+                    return
 
                 if path == "/api/state":
                     with server.state_lock:
