@@ -56,7 +56,8 @@ class ResearchArchive:
                 profile={"id":e.entity_id,"age":e.age,"energy":round(e.energy,2),
                     "position":[e.x,e.y],"words":dict(e.lexicon),"concepts":len(e.concepts),
                     "programs":list(e.learned_programs),"language_stats":dict(e.language_stats),
-                    "program_stats":dict(e.program_stats),"memories":list(e.cultural_memory)[-20:]}
+                    "program_stats":dict(e.program_stats),"context_associations":e.context_associations,
+                    "memories":list(e.cultural_memory)[-20:]}
                 row=db.execute("SELECT first_seen FROM organisms WHERE id=?",(e.entity_id,)).fetchone()
                 first=row["first_seen"] if row else cycle
                 db.execute("""INSERT INTO organisms VALUES(?,?,?,?,?,?)
