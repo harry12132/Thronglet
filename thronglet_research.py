@@ -34,6 +34,10 @@ class ResearchArchive:
         db.row_factory = sqlite3.Row
         try:
             yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
