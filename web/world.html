@@ -28,6 +28,8 @@
 </aside></div></div>
 <script>
 (()=>{
+window.addEventListener("error",event=>{const status=document.getElementById("connection"),events=document.getElementById("events");if(status)status.textContent="● JS ERROR";if(events)events.textContent="Viewer JavaScript error: "+(event.message||"unknown error")+" (see browser console)";});
+window.addEventListener("unhandledrejection",event=>{const status=document.getElementById("connection"),events=document.getElementById("events");if(status)status.textContent="● JS ERROR";if(events)events.textContent="Viewer request error: "+String(event.reason||"unknown error");});
 if (!window.Phaser) {
  const $=id=>document.getElementById(id), wrap=$("game");
  const canvas=document.createElement("canvas"),ctx=canvas.getContext("2d");
