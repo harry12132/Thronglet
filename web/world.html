@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thronglet / Living World</title>
+<style>
+:root{color-scheme:dark;--bg:#090d0e;--panel:#101819;--line:#263535;--text:#e7f0eb;--muted:#81938c;--mint:#a8e3c2;--amber:#e8bf76}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+.app{height:100%;display:grid;grid-template-rows:54px 1fr}.top{display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line);background:#0c1212;gap:16px}.brand{display:flex;align-items:center;gap:13px}.brand strong{font:600 15px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:-.03em}.brand span,.muted{color:var(--muted)}.top a{color:var(--mint);text-decoration:none}.live{color:var(--mint);font-size:11px}.layout{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 290px}.stage{min-width:0;min-height:0;position:relative;background:#0a1110}.canvas-wrap{position:absolute;inset:0}.canvas-wrap canvas{display:block;width:100%;height:100%;image-rendering:pixelated}.hud{position:absolute;z-index:2;top:14px;left:14px;display:flex;gap:7px;flex-wrap:wrap;pointer-events:none}.chip,.controls button{background:#101a19eF;border:1px solid #2a3b37;color:var(--text);padding:7px 9px;border-radius:4px;font-size:11px}.chip b{color:var(--mint);font-weight:600}.controls{position:absolute;z-index:2;right:14px;top:14px;display:flex;gap:6px}.controls button{cursor:pointer}.controls button:hover,.controls button.active{border-color:var(--mint);color:var(--mint)}.legend{position:absolute;left:14px;bottom:14px;z-index:2;display:flex;gap:12px;background:#101a19eF;border:1px solid #2a3b37;padding:8px 10px;border-radius:4px;color:var(--muted);font-size:10px}.dot{display:inline-block;width:7px;height:7px;margin-right:5px;background:#a8e3c2}.dot.resource{background:#789b69}.dot.signal{background:#80c9e8}.dot.danger{background:#c58a67}.side{border-left:1px solid var(--line);background:var(--panel);padding:16px;overflow:auto}.side h2{font:600 12px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.02em;margin:0 0 12px}.section{padding-bottom:17px;margin-bottom:17px;border-bottom:1px solid var(--line)}.section:last-child{border:0}.eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:7px}.big{font-size:25px;color:var(--mint);letter-spacing:-.06em}.row{display:flex;justify-content:space-between;gap:10px;margin:7px 0;font-size:11px}.row span:first-child{color:var(--muted)}.row span:last-child{text-align:right;overflow-wrap:anywhere}.bar{height:5px;background:#263532;margin-top:6px}.bar i{display:block;height:100%;background:var(--mint)}.event{padding:8px 0;border-bottom:1px solid #202c2a;font-size:10px}.event:last-child{border:0}.event small{display:block;color:var(--muted);margin-bottom:3px}.empty{color:var(--muted);font-size:11px}.hint{position:absolute;bottom:46px;right:14px;color:#81938c;font-size:10px;z-index:2;pointer-events:none}
+@media(max-width:760px){.layout{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) 190px}.side{border-left:0;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px;overflow:auto}.section{margin:0;padding:0;border:0}.brand span{display:none}.top{padding:0 12px}.hint{display:none}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+</head>
+<body>
+<div class="app">
+<header class="top"><div class="brand"><strong>THRONGLET</strong><span>/ LIVING WORLD</span><span id="cycle" class="muted">CYCLE —</span></div><div style="display:flex;gap:16px;align-items:center"><span id="connection" class="live">CONNECTING</span><a href="/">Research archive ↗</a></div></header>
+<div class="layout">
+<main class="stage"><div id="game" class="canvas-wrap"></div>
+<div class="hud"><div class="chip">POPULATION <b id="population">—</b></div><div class="chip">GRID <b>64 × 64</b></div><div class="chip">TICK <b id="tick">—</b></div></div>
+<div class="controls"><button id="zoomOut" aria-label="Zoom out">−</button><button id="zoomIn" aria-label="Zoom in">+</button><button id="center">CENTER</button><button id="labels" class="active">LABELS ON</button></div>
+<div class="legend"><span><i class="dot"></i>Organisms</span><span><i class="dot resource"></i>Resources</span><span><i class="dot signal"></i>Signals</span><span><i class="dot danger"></i>Toxicity</span></div><div class="hint">DRAG TO PAN · SCROLL TO ZOOM · SELECT AN ORGANISM</div>
+</main>
+<aside class="side">
+<section class="section"><div class="eyebrow">Selected organism</div><h2 id="selected">No organism selected</h2><div id="inspect" class="empty">Select a being in the world to inspect its current state.</div></section>
+<section class="section"><div class="eyebrow">Environment</div><h2>World conditions</h2><div id="environment"></div></section>
+<section class="section"><div class="eyebrow">Recent activity</div><h2>Simulation events</h2><div id="events" class="empty">Waiting for events…</div></section>
+<section class="section"><div class="eyebrow">Communication</div><h2>Recent exchanges</h2><div id="talk" class="empty">Waiting for conversations…</div></section>
+</aside></div></div>
+<script>
+(()=>{
+const TILE=16,SIZE=64,WORLD=TILE*SIZE;
+const $=id=>document.getElementById(id);
+let latest=null,selected=null,showLabels=true,sceneRef=null,entities=new Map(),lastConvoId=0;
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const hash=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0};
+function makeSprite(scene,key,color){
+ const canvas=document.createElement("canvas");canvas.width=16;canvas.height=16;const c=canvas.getContext("2d");
+ c.fillStyle="#17221e";c.fillRect(4,2,8,2);c.fillRect(2,4,12,7);c.fillRect(4,11,8,3);
+ c.fillStyle=color;c.fillRect(4,3,8,2);c.fillRect(2,5,12,6);c.fillRect(4,11,8,2);
+ c.fillStyle="#d8f3df";c.fillRect(4,5,3,3);c.fillRect(9,5,3,3);
+ c.fillStyle="#17221e";c.fillRect(5,6,1,2);c.fillRect(10,6,1,2);
+ c.fillStyle="#7a9c89";c.fillRect(3,13,3,2);c.fillRect(10,13,3,2);
+ scene.textures.addCanvas(key,canvas);scene.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
+}
+class WorldScene extends Phaser.Scene{
+ constructor(){super("world");this.map=this.add.graphics();this.markers=this.add.graphics();this.lastPositions=new Map();this.lastDraw=0}
+ create(){
+  sceneRef=this;this.cameras.main.setBounds(0,0,WORLD,WORLD);this.cameras.main.setZoom(.78);this.cameras.main.centerOn(WORLD/2,WORLD/2);
+  this.input.on("wheel",(p,objs,dx,dy)=>{const z=this.cameras.main.zoom;this.cameras.main.setZoom(Phaser.Math.Clamp(z*(dy>0?.9:1.1),.35,3))});
+  this.input.on("pointerdown",p=>{if(p.button===2)return;this.drag={x:p.x,y:p.y,cx:this.cameras.main.scrollX,cy:this.cameras.main.scrollY,down:true, moved:false}});
+  this.input.on("pointermove",p=>{if(!this.drag?.down||!p.isDown)return;const dx=p.x-this.drag.x,dy=p.y-this.drag.y;if(Math.abs(dx)+Math.abs(dy)>4)this.drag.moved=true;if(this.drag.moved){const z=this.cameras.main.zoom;this.cameras.main.scrollX=this.drag.cx-dx/z;this.cameras.main.scrollY=this.drag.cy-dy/z}});
+  this.input.on("pointerup",p=>{if(!this.drag)return;const wasDrag=this.drag.moved;this.drag.down=false;if(!wasDrag){const point=this.cameras.main.getWorldPoint(p.x,p.y);const hit=[...entities.values()].sort((a,b)=>Phaser.Math.Distance.Between(point.x,point.y,a.x,a.y)-Phaser.Math.Distance.Between(point.x,point.y,b.x,b.y))[0];if(hit&&Phaser.Math.Distance.Between(point.x,point.y,hit.x,hit.y)<TILE*1.1)selectEntity(hit.data.id)}});
+  this.input.mouse?.disableContextMenu();
+  ["#a8e3c2","#e7c17b","#9bc7e9","#d5a4d8","#e79d83","#9fd3c5"].forEach((c,i)=>makeSprite(this,"being-"+i,c));
+  this.add.rectangle(WORLD/2,WORLD/2,WORLD,WORLD,0x0b1512).setDepth(-10);
+ }
+ drawMap(data){
+  this.map.clear();this.map.fillStyle(0x0b1512,1);this.map.fillRect(0,0,WORLD,WORLD);
+  for(const t of data.tiles||[]){
+   const x=t.x*TILE,y=t.y*TILE;
+   const res=Phaser.Math.Clamp(t.resource/10,0,1),tox=Phaser.Math.Clamp(t.toxicity/5,0,1);
+   let r=Math.round(14+res*29),g=Math.round(25+res*48),b=Math.round(21+res*25);
+   if(tox>.03){r=Math.round(r*(1-tox)+116*tox);g=Math.round(g*(1-tox)+63*tox);b=Math.round(b*(1-tox)+48*tox)}
+   this.map.fillStyle((r<<16)|(g<<8)|b,1);this.map.fillRect(x,y,TILE-1,TILE-1);
+   if(t.signals>0){this.map.fillStyle(0x80c9e8,Math.min(.8,.25+t.signals*.12));this.map.fillRect(x+6,y+6,4,4)}
+  }
+  this.map.lineStyle(1,0x1b3028,.55);
+  for(let i=0;i<=SIZE;i+=8){this.map.lineBetween(i*TILE,0,i*TILE,WORLD);this.map.lineBetween(0,i*TILE,WORLD,i*TILE)}
+ }
+ updateEntities(data){
+  const alive=new Set();
+  for(const d of data.entities||[]){
+   alive.add(d.id);let item=entities.get(d.id);
+   if(!item){
+    const key="being-"+(hash(d.id)%6),sprite=this.add.image(d.x*TILE+8,d.y*TILE+8,key).setDepth(5).setScale(1.35);
+    const label=this.add.text(0,0,d.id.replace(/^Run_[^_]+_/,""),{fontFamily:"monospace",fontSize:"8px",color:"#cce5d5",backgroundColor:"#0b1512cc",padding:{x:3,y:2}}).setOrigin(.5,1).setDepth(6);
+    const ring=this.add.circle(sprite.x,sprite.y,11,0x000000,0).setStrokeStyle(1,0xb9edcf,.0).setDepth(4);
+    item={sprite,label,ring,x:sprite.x,y:sprite.y,data:d};entities.set(d.id,item);
+    this.tweens.add({targets:sprite,scaleY:1.5,duration:430+yHash(d.id)%240,yoyo:true,repeat:-1,ease:"Sine.easeInOut"});
+   }
+   item.data=d;const tx=d.x*TILE+8,ty=d.y*TILE+8;
+   if(Math.abs(item.sprite.x-tx)+Math.abs(item.sprite.y-ty)>1){this.tweens.killTweensOf(item.sprite,{x:true,y:true});this.tweens.add({targets:item.sprite,x:tx,y:ty,duration:220,ease:"Sine.easeOut"})}
+   item.label.setPosition(tx,ty-13).setVisible(showLabels||selected===d.id);
+   item.ring.setPosition(item.sprite.x,item.sprite.y);
+   item.ring.setStrokeStyle(1,selected===d.id?0xe8bf76:0xb9edcf,selected===d.id?.9:0);
+   if(selected===d.id)item.sprite.setDepth(8);else item.sprite.setDepth(5);
+  }
+  for(const [id,item] of entities){if(!alive.has(id)){item.sprite.destroy();item.label.destroy();item.ring.destroy();entities.delete(id)}}
+ }
+ update(){for(const item of entities.values()){item.ring.setPosition(item.sprite.x,item.sprite.y);item.label.setPosition(item.sprite.x,item.sprite.y-13)}}
+}
+function yHash(s){return hash(s)%240}
+const game=new Phaser.Game({type:Phaser.CANVAS,parent:"game",backgroundColor:"#0a1110",pixelArt:true,antialias:false,scale:{mode:Phaser.Scale.RESIZE,width:"100%",height:"100%"},scene:[WorldScene],render:{pixelArt:true,roundPixels:true}});
+function selectEntity(id){selected=id;const item=entities.get(id);if(!item)return;const d=item.data;$("selected").textContent=id;$("inspect").innerHTML='<div class="row"><span>Generation</span><span>'+d.generation+'</span></div><div class="row"><span>Age</span><span>'+d.age+'</span></div><div class="row"><span>Energy</span><span>'+d.energy.toFixed(2)+'</span></div><div class="bar"><i style="width:'+Math.max(0,Math.min(100,d.energy))+'%"></i></div><div class="row"><span>Position</span><span>'+d.x+', '+d.y+'</span></div><div class="row"><span>Vocabulary</span><span>'+d.words+' symbols</span></div><div class="row"><span>Programs</span><span>'+d.programs+'</span></div><div class="row"><span>Messages</span><span>'+d.messages+'</span></div>';}
+function renderEnvironment(data){const tiles=data.tiles||[];const avg=tiles.reduce((s,t)=>s+t.resource,0)/(tiles.length||1),danger=tiles.filter(t=>t.toxicity>.5).length,signals=tiles.reduce((s,t)=>s+t.signals,0);$("environment").innerHTML='<div class="row"><span>Mean resources</span><span>'+avg.toFixed(2)+'/10</span></div><div class="row"><span>Toxic tiles</span><span>'+danger+'</span></div><div class="row"><span>Active signals</span><span>'+signals+'</span></div><div class="row"><span>Occupied tiles</span><span>'+data.entities.length+'</span></div>'}
+function renderEvents(events){$("events").innerHTML=events?.length?events.slice(-7).reverse().map(e=>'<div class="event"><small>CYCLE '+e.cycle+'</small>'+esc(e.message)+'</div>').join(""):'<div class="empty">No recent events recorded.</div>'}
+async function refresh(){
+ try{
+  const [data,convos]=await Promise.all([fetch("/api/world",{cache:"no-store"}).then(r=>{if(!r.ok)throw Error(r.status);return r.json()}),fetch("/api/research/conversations?limit=8",{cache:"no-store"}).then(r=>r.ok?r.json():[])]);
+  latest=data;$("connection").textContent="● LIVE";$("cycle").textContent="CYCLE "+data.cycle.toLocaleString();$("population").textContent=data.population;$("tick").textContent="~"+data.cycle.toLocaleString();
+  const scene=game.scene.getScene("world");if(scene&&scene.sys.isActive()){if(data.cycle%3===0||!scene._drawn){scene.drawMap(data);scene._drawn=true}scene.updateEntities(data)}
+  renderEnvironment(data);renderEvents(data.events);
+  if(convos.length){$("talk").innerHTML=convos.slice(0,5).map(c=>'<div class="event"><small>C'+c.cycle+' · '+esc(c.sender)+' → '+esc(c.receiver)+'</small><span style="color:var(--mint)">'+esc(c.symbol)+'</span> <span class="muted">· '+esc(c.interpretation||"uncertain")+'</span></div>').join("")}
+  if(selected&&entities.has(selected))selectEntity(selected);else if(selected){selected=null;$("selected").textContent="No organism selected";$("inspect").textContent="This organism is no longer in the living population."}
+ }catch(e){$("connection").textContent="● DISCONNECTED";console.error(e)}
+}
+$("zoomIn").onclick=()=>{const c=game.scene.getScene("world")?.cameras.main;if(c)c.setZoom(Math.min(3,c.zoom*1.2))};
+$("zoomOut").onclick=()=>{const c=game.scene.getScene("world")?.cameras.main;if(c)c.setZoom(Math.max(.35,c.zoom/1.2))};
+$("center").onclick=()=>{const c=game.scene.getScene("world")?.cameras.main;if(c){c.centerOn(WORLD/2,WORLD/2);c.setZoom(.78)}};
+$("labels").onclick=()=>{showLabels=!showLabels;$("labels").textContent=showLabels?"LABELS ON":"LABELS OFF";$("labels").classList.toggle("active",showLabels);for(const [id,item] of entities)item.label.setVisible(showLabels||selected===id)};
+setInterval(refresh,900);refresh();
+})();
+</script></body></html>
