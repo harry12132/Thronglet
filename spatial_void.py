@@ -844,10 +844,14 @@ class SpatialVoidSimulation:
     # -----------------------------------------------------------------------
 
     def spawn_founder(self):
+        # Founders begin in the same small region so social encounters can
+        # occur immediately instead of being diluted across the full grid.
         entity = Entity(
             entity_id=(
                 f"Run_{self.run_id}_Spawn_{self.entity_counter}"
-            )
+            ),
+            x=(GRID_SIZE // 2 + random.randint(-1, 1)) % GRID_SIZE,
+            y=(GRID_SIZE // 2 + random.randint(-1, 1)) % GRID_SIZE,
         )
 
         self.entity_counter += 1
